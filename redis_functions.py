@@ -30,7 +30,7 @@ class RedisInitializeer(Client):
 
 
         #Write data to redis base
-        self.client.flushall() #delete all keys
+        #self.client.flushall() #delete all keys    <<-------  delete all keys at the begining of the process
             #environmental data
         self.client.set('env_name',self.env_name)
         self.client.tensorset('input_dims', self.input_dims)
@@ -154,7 +154,7 @@ class RegulatorInterface(Client):
         #print('obs=',obs)
         #print('obs_=', obs_)
         #print('action=', action)
-        print('reward', self.client.get(f'reward{index}'))
+        #print('reward', self.client.get(f'reward{index}'))
         #print('done', done)
         #print('index=',index,'mem_cnt=',self.mem_cntr)
         #print(f'trajectory{index}',self.smembers(f'trajectory{index}'))
