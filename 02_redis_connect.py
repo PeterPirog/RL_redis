@@ -33,18 +33,27 @@ import tensorflow as tf
 
 
 from redisai import Client
-client = Client(host='192.168.1.16',port=6380,db=0)
+client = Client(host='192.168.1.16',port=6379,db=0)
+client.flushall()#delete all keys
+client.set('cnt',0)
 
 
-arr = np.array([[2.1, 3.3]])
+for i in range(6):
+    cnt=str(client.get('cnt'))
+    client.incr('cnt')
+    arr=np.random.random_sample((3, 2))
+    client.tensorset(f'key{cnt}', arr)
+    client.sadd('myset',f'key{cnt}')
 
-client.tensorset('x',arr)
+    #print(client.tensorget(f'key{cnt}'))
 
-arr_t=client.tensorget('x')
-print(arr_t)
-
-for i in range(10):
-    arr=np.random.randn(4,2)
-    client.tensorset(f'key{i}', arr)
 print(client.keys())
-print(client.tensorget('x2',arr))
+
+print(client.smembers('myset'))
+
+
+#print(client.get('cnt'))
+
+
+#get random values
+print(client.srandmember('myset',5))
