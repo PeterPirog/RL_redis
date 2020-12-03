@@ -101,13 +101,4 @@ if __name__=='__main__':
     print('time delay',end-start)
 
 
-    """
-    batch1=tr_i.client.srandmember('trajectories',batch_size)
-    print(batch1)
 
-    batch2=tr_i.client.smembers('trajectory235216')
-    print(batch2)
-
-    batch3=tr_i.client.pipeline() mget(batch2)
-    print(batch3)
-    """
