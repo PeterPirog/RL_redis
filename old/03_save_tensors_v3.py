@@ -30,10 +30,11 @@ class TrainerInterface(Client):
         self.batch_size=batch_size
         self.stop_gathering = int(
             self.client.get('stop_gathering'))  # information for regulators if 1 stop data collecting
-        self.mem_cntr = self.client.get('mem_cntr')
-        self.mem_size = float(self.client.get('mem_size'))
+        self.mem_cntr = int(self.client.get('mem_cntr'))
+        self.mem_size = int(self.client.get('mem_size'))
 
-        self.show_info()
+
+        #self.show_info()
 
     def show_info(self):
         print('\n ---------------- INFO ---------------------------------')
@@ -51,46 +52,37 @@ class TrainerInterface(Client):
             print(f'Action meanings not decribed in env')
 
     def get_batch(self):
-        input_dims=24
 
-        self.observations = np.zeros(shape=(self.batch_size, input_dims))
-        self.observations_ = np.zeros(shape=(self.batch_size, input_dims))
-        self.actions = np.zeros(shape=(self.batch_size, self.n_actions))
-        self.rewards = np.zeros(shape=(self.batch_size))
-        self.dones = np.zeros(shape=(self.batch_size))
+        self.mem_cntr = int(self.client.get('mem_cntr'))
+        idx_max=np.min([self.mem_cntr,self.mem_size])
+        #print('idx_max=',idx_max)
+        batch = np.random.choice(idx_max, self.batch_size, replace=False) #rand indexes to get from redis database
+        #print('batch=',batch)
 
-        # get random trajectories from redis server
-        self.trajectories = self.client.srandmember('trajectories', self.batch_size)
 
-        # iterate for single trajectories in set
-        for i in range(self.batch_size):
-            trajectory = self.trajectories[i]
-            # print(trajectory)
+        #Get tensors with randomized indexes and stack them into batches
+        self.observations=tf.stack([tf.Variable(self.client.tensorget(f'obs{batch[i]}'), dtype=tf.float32) for i in range(self.batch_size)],axis=0)
+        self.observations_ = tf.stack([tf.Variable(self.client.tensorget(f'obs_{batch[i]}'), dtype=tf.float32) for i in range(self.batch_size)],axis=0)
+        self.actions = tf.stack([tf.Variable(self.client.tensorget(f'action{batch[i]}'), dtype=tf.float32) for i in range(self.batch_size)],axis=0)
 
-            number = re.findall(r'\d+', str(trajectory, encoding='utf-8'))[0]
-            # print('number=',number)
-            sarsd = self.client.smembers(trajectory)
-            # print(sarsd)
-            reward, done = self.client.mget(f'reward{number}', f'done{number}')
-            reward = float(reward)
-            done = int(done)
 
-            obs = np.array([self.client.tensorget(f'obs{number}')])
-            obs_ = np.array([self.client.tensorget(f'obs_{number}')])
-            action = np.array([tr_i.client.tensorget(f'action{number}')])
-            # print(f'obs_= {obs_}, reward={reward}  done={done} ')
 
-            self.dones[i] = done
-            self.rewards[i] = reward
-            self.observations[i,] = obs
-            self.observations_[i,] = obs_
-            self.actions[i,] = action
+        #get rewards from database
+        reward=self.client.mget([f'reward{batch[i]}' for i in range(self.batch_size)])
+        self.rewards=np.array(reward,dtype=np.float)
+        self.rewards=tf.convert_to_tensor(self.rewards,dtype=tf.float32)
 
-        self.observations = tf.convert_to_tensor(self.observations, dtype=tf.float32)
-        self.observations_ = tf.convert_to_tensor(self.observations_, dtype=tf.float32)
-        self.actions = tf.convert_to_tensor(self.actions, dtype=tf.float32)
-        self.rewards = tf.convert_to_tensor(self.rewards, dtype=tf.float32)
-        self.dones = tf.convert_to_tensor(self.dones, dtype=tf.int32)
+        #get dones from database
+        done=self.client.mget([f'done{batch[i]}' for i in range(self.batch_size)])
+        self.dones=np.array(done,dtype=np.int)
+        self.dones=tf.convert_to_tensor(self.dones,dtype=tf.int32)
+
+        #print('self.observations=',self.observations)
+        #print('self.observations_=', self.observations_)
+        #print('self.actions=', self.actions)
+        #print('rewards=',self.rewards)
+        #print('dones=', self.dones)
+
 
         return self.observations, self.actions, self.rewards, self.observations_, self.dones
 
@@ -98,7 +90,7 @@ class TrainerInterface(Client):
 if __name__ == '__main__':
 
 
-    batch_size = 50
+    batch_size = 5
     tr_i = TrainerInterface(host='192.168.1.16', port=6379, batch_size=5)
 
     delays=[]
@@ -109,26 +101,15 @@ if __name__ == '__main__':
         delay = time.time()-start
         delays.append(delay)
 
-
+        M=np.mean(delays)
+        S=np.std(delays)
     #print('observations=', observations)
     #print('actions=', actions)
     #print('observations_=', observations_)
     #print('rewards=', rewards)
     #print('dones=', dones)
     print('delays=',delays)
-    print('time delay mean', np.mean(delays))
-    print('time delay std', np.std(delays))
-    print('\nMaximum time=',np.mean(delays)+2*np.std(delays))
-    print('\nMaximum time for single trajectory:',(np.mean(delays)+2*np.std(delays))/batch_size)
-
-"""
-batch_size=50
-i=200
-
-time delay mean 0.12399347066879272
-time delay std 0.05498064829960305
-
-Maximum time= 0.23395476726799883
-
-Maximum time for single trajectory: 0.004679095345359976
-"""
+    print('time delay mean', M)
+    print('time delay std', S)
+    print('\nMaximum time=',M+2*S)
+    print('\nMaximum time for single trajectory:',(M+2*S)/batch_size)
