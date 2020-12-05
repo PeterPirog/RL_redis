@@ -102,7 +102,7 @@ if __name__ == '__main__':
     tr_i = TrainerInterface(host='192.168.1.16', port=6379, batch_size=5)
 
     delays=[]
-    for i in range(100):
+    for i in range(1000):
         print(f'Epoch:{i}')
         start = time.time()  # time count
         observations, actions, rewards, observations_, dones=tr_i.get_batch()
@@ -110,7 +110,7 @@ if __name__ == '__main__':
         delays.append(delay)
 
 
-    #print('observations=', observations)
+    print('observations=', observations)
     #print('actions=', actions)
     #print('observations_=', observations_)
     #print('rewards=', rewards)
@@ -123,12 +123,12 @@ if __name__ == '__main__':
 
 """
 batch_size=50
-i=200
+i=1000
+time delay mean 0.11330771708488464
+time delay std 0.036688664904731605
 
-time delay mean 0.12399347066879272
-time delay std 0.05498064829960305
+Maximum time= 0.18668504689434784
 
-Maximum time= 0.23395476726799883
+Maximum time for single trajectory: 0.003733700937886957
 
-Maximum time for single trajectory: 0.004679095345359976
 """
