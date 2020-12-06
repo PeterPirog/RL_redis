@@ -2,8 +2,6 @@ import gym
 from redis_functions import RegulatorInterface
 import numpy as np
 
-
-
 class PolicyPi():
     def __init__(self,regulator_interface,random=True):
         self.reg_i=regulator_interface

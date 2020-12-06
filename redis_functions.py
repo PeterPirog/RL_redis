@@ -3,6 +3,39 @@ from redisai import Client
 import numpy as np
 import tensorflow as tf
 
+class Info():
+    """
+    This class read information about environment from redis database
+    """
+    def __init__(self,host, port, db=0):
+        pass
+
+    def get_env_info_from_redis(self,host, port, db=0,show_info=True):
+        self.host = host
+        self.port = port
+        self.db = db
+        self.client = Client(host=self.host, port=self.port, db=self.db)
+
+        # Environment data
+        self.env_name = str(self.client.get('env_name'), encoding='utf-8')
+        self.input_dims = self.client.tensorget('input_dims')  # need to improve
+
+        self.n_actions = int(self.client.get('n_actions'))
+        self.action_continous = int(self.client.get('action_continous'))
+        self.max_action = float(self.client.get('max_action'))  # maximum value for action output
+        self.min_action = float(self.client.get('min_action'))  # minimum value for action output
+        if show_info:
+            print('\n ---------------- INFO ---------------------------------')
+            print(f'The environment: {self.env_name} has been created\n')
+            print(' -------------- observations --------------------------')
+            print(f'Input observation dimension: {self.input_dims}\n')
+            print(' -------------- actions --------------------------')
+            print(f'Number of actions: {self.n_actions}')
+            print(f'Action continous: {self.action_continous}')
+            print(f'Maximum action value: {self.max_action}')
+            print(f'Minimum action value: {self.min_action}\n')
+
+
 class RedisInitializeer(Client):
     def __init__(self,host,port,environment,db=0,mem_size=1000000):
         super().__init__()
@@ -43,44 +76,8 @@ class RedisInitializeer(Client):
         self.client.set('stop_gathering', self.stop_gathering)
         self.client.set('mem_size', self.mem_size)
         self.client.set('mem_cntr', self.mem_cntr)
-        """
-        #make initial trajectories
-        for i in range(self.mem_size):
-            cnt = str(self.client.get('mem_cntr'))
-            self.client.incr('mem_cntr')
-
-            state = np.zeros((1,*self.input_dims))#np.random.random_sample((3, 2))
-            state_ = np.zeros((1, *self.input_dims))
-            action=np.zeros((1, self.n_actions))
-            reward=0
-            done=0
-
-            self.client.tensorset(f'state{cnt}', state)
-            self.client.tensorset(f'state_{cnt}', state_)
-            self.client.tensorset(f'action{cnt}', action)
-            self.client.set(f'reward{cnt}',reward)
-            self.client.set(f'done{cnt}', done)
 
 
-            #add sarsd to one trajectory
-            self.client.sadd(f'trajectory{cnt}', f'state{cnt}')
-            self.client.sadd(f'trajectory{cnt}', f'state_{cnt}')
-            self.client.sadd(f'trajectory{cnt}', f'action{cnt}')
-            self.client.sadd(f'trajectory{cnt}', f'reward{cnt}')
-            self.client.sadd(f'trajectory{cnt}', f'done{cnt}')
-
-            #add trajectory to the set of trajectories
-            self.client.sadd(f'sarsd', f'trajectory{cnt}')
-
-        """
-
-        print('keys=',self.client.keys())
-        #print(self.client.get('input_dims'))
-        #print(self.client.smembers('sarsd'))
-        #print(self.client.srandmember('sarsd', self.batch_size))
-        #print(self.client.info())
-
-        self.show_info()
 
     def show_info(self):
         print('\n ---------------- INFO ---------------------------------')
@@ -176,25 +173,10 @@ class RegulatorInterface(Client):
         except:
             print(f'Action meanings not decribed in env')
 
-class TrainerInterface(Client):
+class TrainerInterface(Info):
     def __init__(self, host, port, db=0, batch_size=5):
-        super().__init__()
-        # redis data
-        self.host = host
-        self.port = port
-        self.db = db
-        self.client = Client(host=self.host, port=self.port, db=self.db)  # decode_responses=True
-
-        # Environment data
-        self.env_name = str(self.client.get('env_name'), encoding='utf-8')
-        self.input_dims = self.client.tensorget('input_dims')  # need to improve
-
-        # print('self.input_dims=', self.input_dims)
-
-        self.n_actions = int(self.client.get('n_actions'))
-        self.action_continous = int(self.client.get('action_continous'))
-        self.max_action = float(self.client.get('max_action'))  # maximum value for action output
-        self.min_action = float(self.client.get('min_action'))  # minimum value for action output
+        super().__init__(host, port)
+        self.get_env_info_from_redis(host, port)
 
         # Prcess control data
         self.batch_size = batch_size
@@ -203,50 +185,31 @@ class TrainerInterface(Client):
         self.mem_cntr = int(self.client.get('mem_cntr'))
         self.mem_size = int(self.client.get('mem_size'))
 
-        # self.show_info()
+    def __get_tensors(self,tensor_name,batch_indexes):
+        #Function gets single tensors form redis database, stack them by rows into numpy array and converts to 2D tensorflow tensor
+        tensors = np.stack([self.client.tensorget(f'{tensor_name}{batch_indexes[i]}') for i in range(len(batch_indexes))])
+        tensors = tf.convert_to_tensor(tensors, dtype=tf.float32)
+        return tensors
 
-    def show_info(self):
-        print('\n ---------------- INFO ---------------------------------')
-        print(f'The environment: {self.env_name} has been created\n')
-        print(' -------------- observations --------------------------')
-        print(f'Input observation dimension: {self.input_dims}\n')
-        print(' -------------- actions --------------------------')
-        print(f'Number of actions: {self.n_actions}')
-        print(f'Action continous: {self.action_continous}')
-        print(f'Maximum action value: {self.max_action}')
-        print(f'Minimum action value: {self.min_action}')
-        try:
-            print(f'Action meanings: {self.env.unwrapped.get_action_meanings()}')
-        except:
-            print(f'Action meanings not decribed in env')
+    def __get_multiple_keys(self,key_name,batch_indexes,tf_dtype=tf.float32):
+        # Function gets multiple keys from redis database, converts to numpy vector and next to tensorflow 1D tensor
+        values = self.client.mget([f'{key_name}{batch_indexes[i]}' for i in range(len(batch_indexes))])
+        values = np.array(values, dtype=np.float)
+        values = tf.convert_to_tensor(values, dtype=tf_dtype)
+        return values
 
     def get_batch(self):
-
-        self.mem_cntr = int(self.client.get('mem_cntr'))
+        self.mem_cntr = int(self.client.get('mem_cntr'))    #get current counter
         idx_max = np.min([self.mem_cntr, self.mem_size])
-        batch = np.random.choice(idx_max, self.batch_size, replace=False)  # rand indexes to get from redis database
+        batch_indexes = np.random.choice(idx_max, self.batch_size, replace=False)  # draw indexes to get trajectories from redis database
 
-        # Get tensors with randomized indexes and stack them into batches
-        # get observations from database
-        self.observations = np.stack([self.client.tensorget(f'obs{batch[i]}') for i in range(self.batch_size)])
-        self.observations = tf.convert_to_tensor(self.observations, dtype=tf.float32)
+        #get tensors from database
+        self.observations=self.__get_tensors('obs',batch_indexes)
+        self.observations_ = self.__get_tensors('obs_', batch_indexes)
+        self.actions=self.__get_tensors('action', batch_indexes)
 
-        # get next observations from database
-        self.observations_ = np.stack([self.client.tensorget(f'obs_{batch[i]}') for i in range(self.batch_size)])
-        self.observations_ = tf.convert_to_tensor(self.observations_, dtype=tf.float32)
-
-        # get actions from database
-        self.actions = np.stack([self.client.tensorget(f'action{batch[i]}') for i in range(self.batch_size)])
-        self.actions = tf.convert_to_tensor(self.actions, dtype=tf.float32)
-
-        # get rewards from database
-        reward = self.client.mget([f'reward{batch[i]}' for i in range(self.batch_size)])
-        self.rewards = np.array(reward, dtype=np.float)
-        self.rewards = tf.convert_to_tensor(self.rewards, dtype=tf.float32)
-
-        # get dones from database
-        done = self.client.mget([f'done{batch[i]}' for i in range(self.batch_size)])
-        self.dones = np.array(done, dtype=np.int)
-        self.dones = tf.convert_to_tensor(self.dones, dtype=tf.int32)
+        #get multiple keys from database
+        self.rewards=self.__get_multiple_keys('reward',batch_indexes)
+        self.dones=self.__get_multiple_keys('done',batch_indexes,tf_dtype=tf.int32)
 
         return self.observations, self.actions, self.rewards, self.observations_, self.dones
