@@ -193,13 +193,13 @@ class TrainerInterface(Info):
 
     def __get_multiple_keys(self,key_name,batch_indexes,tf_dtype=tf.float32):
         '''
-
+        Function gets multiple keys from redis database, converts to numpy vector and next to tensorflow 1D tensor
         :param key_name:
         :param batch_indexes:
         :param tf_dtype:
         :return:
         '''
-        # Function gets multiple keys from redis database, converts to numpy vector and next to tensorflow 1D tensor
+
         values = self.client.mget([f'{key_name}{batch_indexes[i]}' for i in range(len(batch_indexes))])
         values = np.array(values, dtype=np.float)
         values = tf.convert_to_tensor(values, dtype=tf_dtype)
