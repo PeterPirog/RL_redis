@@ -3,7 +3,7 @@ from redisai import Client
 import numpy as np
 import tensorflow as tf
 
-class Info():
+class Info:
     """
     This class read information about environment from redis database
     """
@@ -192,6 +192,13 @@ class TrainerInterface(Info):
         return tensors
 
     def __get_multiple_keys(self,key_name,batch_indexes,tf_dtype=tf.float32):
+        '''
+
+        :param key_name:
+        :param batch_indexes:
+        :param tf_dtype:
+        :return:
+        '''
         # Function gets multiple keys from redis database, converts to numpy vector and next to tensorflow 1D tensor
         values = self.client.mget([f'{key_name}{batch_indexes[i]}' for i in range(len(batch_indexes))])
         values = np.array(values, dtype=np.float)
