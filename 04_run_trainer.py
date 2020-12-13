@@ -1,7 +1,7 @@
 import numpy as np
 import gym
 import tensorflow as tf
-from redisai import Client
+
 import time
 from redis_functions import TrainerInterface
 

@@ -2,15 +2,22 @@ import gym
 from redisai import Client
 import numpy as np
 import tensorflow as tf
+import sys
+import time
 
-class Info:
+
+class InfoInRedis:
     """
-    This class read information about environment from redis database
+    This class read information about environment from redis database and show it
     """
     def __init__(self,host, port, db=0):
-        pass
-
-    def get_env_info_from_redis(self,host, port, db=0,show_info=True):
+        '''
+         Function gets from redis database information about parameters of gym environment
+        :param host: ip of redis database host e.g. '192.168.1.16' or 'local'
+        :param port: redis service port, check proper port forwarding if using docker images
+        :param db: redis databse index, default 0, use other values if there are more databases in redis server
+        :param get_info:
+        '''
         self.host = host
         self.port = port
         self.db = db
@@ -21,28 +28,39 @@ class Info:
         self.input_dims = self.client.tensorget('input_dims')  # need to improve
 
         self.n_actions = int(self.client.get('n_actions'))
-        self.action_continous = int(self.client.get('action_continous'))
+        self.action_discrete = int(self.client.get('action_discrete'))
         self.max_action = float(self.client.get('max_action'))  # maximum value for action output
         self.min_action = float(self.client.get('min_action'))  # minimum value for action output
-        if show_info:
-            print('\n ---------------- INFO ---------------------------------')
-            print(f'The environment: {self.env_name} has been created\n')
-            print(' -------------- observations --------------------------')
-            print(f'Input observation dimension: {self.input_dims}\n')
-            print(' -------------- actions --------------------------')
-            print(f'Number of actions: {self.n_actions}')
-            print(f'Action continous: {self.action_continous}')
-            print(f'Maximum action value: {self.max_action}')
-            print(f'Minimum action value: {self.min_action}\n')
 
+        #Process control data
+        self.stop_collecting=int(self.client.get('stop_collecting')) #information for regulators if 1 stop regulator, 2 suspend regulator
+        self.stop_training = int(self.client.get('stop_training'))  # information for trainers if 1 stop regulator, 2 suspend trainer
+        self.mem_cntr = self.client.get('mem_cntr')
+        self.mem_size = float(self.client.get('mem_size'))
+        self.batch_size=int(self.client.get('batch_size'))
 
-class RedisInitializeer(Client):
-    def __init__(self,host,port,environment,db=0,mem_size=1000000):
-        super().__init__()
+    def show_info(self):
+        print('\n ---------------- INFO ---------------------------------')
+        print(f'The environment: {self.env_name} has been created\n')
+        print(' -------------- observations --------------------------')
+        print(f'Input observation dimension: {self.input_dims}\n')
+        print(' -------------- actions --------------------------')
+        print(f'Number of actions: {self.n_actions}')
+        print(f'Action discrete: {self.action_discrete}')
+        print(f'Maximum action value: {self.max_action}')
+        print(f'Minimum action value: {self.min_action}\n')
+
+class RedisInitializer(InfoInRedis):
+    '''
+    RedisInitializeer  is connecting with redisai database in address = host in specified port and initiate gym environment
+    '''
+    def __init__(self,host,port,environment,db=0,mem_size=1000000,clean_all_keys=True,batch_size=10,stop_collecting=0,stop_training=1):
+
         #redis data
         self.host=host
         self.port=port
         self.db=db
+
         self.mem_size=mem_size
         self.client = Client(host=self.host, port=self.port, db=self.db)
 
@@ -52,138 +70,99 @@ class RedisInitializeer(Client):
         self.input_dims=np.asarray(self.env.reset().shape,dtype=np.int)
 
         self.n_actions=4#self.env.action_space.n
-        self.action_continous = 1 # 1 for continous, 0 for discreete
+        self.action_discrete = 0 # 1 for discrete, 0 for continuous
         self.max_action=1 #maximum value for action output
         self.min_action = -1 #minimum value for action output
 
-
         #Prcess control data
-        self.stop_gathering=0 #information for regulators if 1 stop data collecting
+        self.stop_collecting=stop_collecting #information for regulators if 1 stop data collecting
+        self.stop_training= stop_training  # information for trainers, stopped if 1, running if 0, prevent start training before number of keys is smaller than batch size
         self.mem_cntr = 0
-        self.batch_size=3
-
+        self.batch_size=batch_size
 
         #Write data to redis base
-        #self.client.flushall() #delete all keys    <<-------  delete all keys at the begining of the process
+        if clean_all_keys:
+            self.client.flushall() #delete all keys    <<-------  delete all keys at the begining of the process
+
             #environmental data
         self.client.set('env_name',self.env_name)
         self.client.tensorset('input_dims', self.input_dims)
         self.client.set('n_actions', self.n_actions)
         self.client.set('max_action', self.max_action)
         self.client.set('min_action', self.min_action)
-        self.client.set('action_continous', self.action_continous)
+        self.client.set('action_discrete', self.action_discrete)
             #Process control data
-        self.client.set('stop_gathering', self.stop_gathering)
+        self.client.set('stop_collecting', self.stop_collecting)
+        self.client.set('stop_training', self.stop_training)
         self.client.set('mem_size', self.mem_size)
         self.client.set('mem_cntr', self.mem_cntr)
+        self.client.set('batch_size',self.batch_size)
 
-
-
-    def show_info(self):
-        print('\n ---------------- INFO ---------------------------------')
-        print(f'The environment: {self.env_name} has been created\n')
-        print(' -------------- observations --------------------------')
-        print(f'Input observation dimension: {self.input_dims}\n')
-        print(' -------------- actions --------------------------')
-        print(f'Number of actions: {self.n_actions}')
-        print(f'Action continous: {self.action_continous}')
-        print(f'Maximum action value: {self.max_action}')
-        print(f'Minimum action value: {self.min_action}')
-        try:
-            print(f'Action meanings: {self.env.unwrapped.get_action_meanings()}')
-        except:
-            print(f'Action meanings not decribed in env')
-
-class RegulatorInterface(Client):
+class RegulatorInterface(InfoInRedis):
     def __init__(self,host,port,db=0):
-        super().__init__()
-        #redis data
+
         self.host=host
         self.port=port
-        self.db = db
-        self.client = Client(host=self.host, port=self.port, db=self.db) #decode_responses=True
+        self.db=db
 
-        # Environment data
-        self.env_name=str(self.client.get('env_name'),encoding='utf-8')
-        self.input_dims=self.client.tensorget('input_dims')
-        self.n_actions=int(self.client.get('n_actions'))
-        self.action_continous=int(self.client.get('action_continous'))
-        self.max_action=float(self.client.get('max_action')) #maximum value for action output
-        self.min_action = float(self.client.get('min_action'))#minimum value for action output
-
-        #Prcess control data
-        self.stop_gathering=int(self.client.get('stop_gathering')) #information for regulators if 1 stop data collecting
-        self.mem_cntr = self.client.get('mem_cntr')
-        self.mem_size = float(self.client.get('mem_size'))
+        super().__init__(host=self.host, port=self.port, db=self.db)
+        #Show info about environment and process from redis database
         self.show_info()
 
     def storage_data(self,obs,action,reward,obs_,done):
-        obs=np.array(obs,dtype=np.float)
-        obs_ = np.array(obs_, dtype=np.float)
-        action=np.array(action, dtype=np.float)
-        done=int(done)
-
-        self.mem_cntr = int(self.client.get('mem_cntr')) #get free database index
-        self.client.incr('mem_cntr')  #increment index to lock value in use
-        index=int(self.mem_cntr % self.mem_size)  #if the counter is bigger than allocated buffer refill from oldest samples
-
-        self.client.tensorset(f'obs{index}', obs)
-        self.client.tensorset(f'obs_{index}', obs_)
-        self.client.tensorset(f'action{index}', action)
-        #self.client.set(f'reward{index}', reward)
-        #self.client.set(f'done{index}', done)
-
-
-        self.client.mset({f'reward{index}': reward,
-                          f'done{index}': done})
-        #combine sarsd into one trajectory
-        self.client.sadd(f'trajectory{index}',f'obs{index}',f'obs_{index}',f'action{index}',f'reward{index}',f'done{index}')
-        #and add this n-th trajectory to all trajectories
-        self.client.sadd('trajectories',f'trajectory{index}')
-
-
+        '''
+        :param obs:  current state  - type -> numpy array
+        :param action: action taken  - type -> numpy array
+        :param reward:  reward from transition (obs,action) to obs_, type -> float value
+        :param obs_: next state  - type -> numpy array
+        :param done: value 1 for teminal state, value 0 for non-teminal state, type -> int value
+        :return:
+        '''
         #check if data should be collected
-        self.stop_gathering=int(self.client.get('stop_gathering'))
-        if self.stop_gathering:
-            print('Stop_gathering flag has been set. Finishing episode')
+        self.stop_collecting=int(self.client.get('stop_collecting')) # 0 - collecting, 1 - stop, 2 - suspend
 
-        #self.client.sadd(f'trajectory{index}', f'obs{index}')
+        if self.stop_collecting == 1: #regulator is stopped
+            print(' Script has been stopped because "stop_collecting" flag in equal 1')
+            sys.exit()
 
-        #print('obs=',obs)
-        #print('obs_=', obs_)
-        #print('action=', action)
-        #print('reward', self.client.get(f'reward{index}'))
-        #print('done', done)
-        #print('index=',index,'mem_cnt=',self.mem_cntr)
-        #print(f'trajectory{index}',self.smembers(f'trajectory{index}'))
-        pass
+        elif self.stop_collecting == 2: #regulator is suspended
+            print(' Script has been suspended because "stop_collecting" flag in equal 2, change flag value to 0 to resume')
+            time.sleep(1)
 
-    def show_info(self):
-        print('\n ---------------- INFO ---------------------------------')
-        print(f'The environment: {self.env_name} has been created\n')
-        print(' -------------- observations --------------------------')
-        print(f'Input observation dimension: {self.input_dims}\n')
-        print(' -------------- actions --------------------------')
-        print(f'Number of actions: {self.n_actions}')
-        print(f'Action continous: {self.action_continous}')
-        print(f'Maximum action value: {self.max_action}')
-        print(f'Minimum action value: {self.min_action}')
-        try:
-            print(f'Action meanings: {self.env.unwrapped.get_action_meanings()}')
-        except:
-            print(f'Action meanings not decribed in env')
+        else: #regulator is running and collecting samples
+            obs = np.array(obs, dtype=np.float)
+            obs_ = np.array(obs_, dtype=np.float)
+            action = np.array(action, dtype=np.float)
+            done = int(done)
 
-class TrainerInterface(Info):
+            self.mem_cntr = int(self.client.get('mem_cntr'))  # get free database index
+            self.client.incr('mem_cntr')  # increment index to lock value in use
+            index = int(
+                self.mem_cntr % self.mem_size)  # if the counter is bigger than allocated buffer refill from oldest samples
+
+            # store tensors into a redis database
+            self.client.tensorset(f'obs{index}', obs)
+            self.client.tensorset(f'obs_{index}', obs_)
+            self.client.tensorset(f'action{index}', action)
+
+            # store tfloat and int values into a redis database
+            self.client.mset({f'reward{index}': reward,
+                              f'done{index}': done})
+
+class TrainerInterface(InfoInRedis):
     def __init__(self, host, port, db=0, batch_size=5):
-        super().__init__(host, port)
-        self.get_env_info_from_redis(host, port)
+        self.host=host
+        self.port=port
+        self.db=db
 
-        # Prcess control data
-        self.batch_size = batch_size
-        self.stop_gathering = int(
-            self.client.get('stop_gathering'))  # information for regulators if 1 stop data collecting
-        self.mem_cntr = int(self.client.get('mem_cntr'))
-        self.mem_size = int(self.client.get('mem_size'))
+        #change batch size if changed in Trainer interface
+        if batch_size is not self.batch_size:
+            self.batch_size=batch_size
+            self.client.set('batch_size',self.batch_size)
+
+        super().__init__(host=self.host, port=self.port, db=self.db)
+        #Show info about environment and process from redis database
+        self.show_info()
 
     def __get_tensors(self,tensor_name,batch_indexes):
         #Function gets single tensors form redis database, stack them by rows into numpy array and converts to 2D tensorflow tensor
@@ -199,15 +178,15 @@ class TrainerInterface(Info):
         :param tf_dtype:
         :return:
         '''
-
         values = self.client.mget([f'{key_name}{batch_indexes[i]}' for i in range(len(batch_indexes))])
         values = np.array(values, dtype=np.float)
         values = tf.convert_to_tensor(values, dtype=tf_dtype)
         return values
 
     def get_batch(self):
+        #add waiting from batch
         self.mem_cntr = int(self.client.get('mem_cntr'))    #get current counter
-        idx_max = np.min([self.mem_cntr, self.mem_size])
+        idx_max = int(np.min([self.mem_cntr, self.mem_size]))
         batch_indexes = np.random.choice(idx_max, self.batch_size, replace=False)  # draw indexes to get trajectories from redis database
 
         #get tensors from database
