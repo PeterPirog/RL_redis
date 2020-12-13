@@ -4,6 +4,8 @@ import numpy as np
 import tensorflow as tf
 import sys
 import time
+import os
+import pickle
 
 
 class InfoInRedis:
@@ -62,6 +64,7 @@ class RedisInitializer(InfoInRedis):
         self.db=db
 
         self.mem_size=mem_size
+        self.clean_all_keys=clean_all_keys
         self.client = Client(host=self.host, port=self.port, db=self.db)
 
         #Environment data
@@ -81,7 +84,7 @@ class RedisInitializer(InfoInRedis):
         self.batch_size=batch_size
 
         #Write data to redis base
-        if clean_all_keys:
+        if self.clean_all_keys:
             self.client.flushall() #delete all keys    <<-------  delete all keys at the begining of the process
 
             #environmental data
@@ -122,11 +125,11 @@ class RegulatorInterface(InfoInRedis):
         self.stop_collecting=int(self.client.get('stop_collecting')) # 0 - collecting, 1 - stop, 2 - suspend
 
         if self.stop_collecting == 1: #regulator is stopped
-            print(' Script has been stopped because "stop_collecting" flag in equal 1')
+            print(' Script has been stopped because "stop_collecting" flag is equal 1')
             sys.exit()
 
         elif self.stop_collecting == 2: #regulator is suspended
-            print(' Script has been suspended because "stop_collecting" flag in equal 2, change flag value to 0 to resume')
+            print(' Script has been suspended because "stop_collecting" flag is equal 2, change flag value to 0 to resume')
             time.sleep(1)
 
         else: #regulator is running and collecting samples
@@ -154,13 +157,13 @@ class TrainerInterface(InfoInRedis):
         self.host=host
         self.port=port
         self.db=db
+        super().__init__(host=self.host, port=self.port, db=self.db)
 
         #change batch size if changed in Trainer interface
-        if batch_size is not self.batch_size:
+        if batch_size != self.batch_size:
             self.batch_size=batch_size
             self.client.set('batch_size',self.batch_size)
 
-        super().__init__(host=self.host, port=self.port, db=self.db)
         #Show info about environment and process from redis database
         self.show_info()
 
@@ -183,12 +186,7 @@ class TrainerInterface(InfoInRedis):
         values = tf.convert_to_tensor(values, dtype=tf_dtype)
         return values
 
-    def get_batch(self):
-        #add waiting from batch
-        self.mem_cntr = int(self.client.get('mem_cntr'))    #get current counter
-        idx_max = int(np.min([self.mem_cntr, self.mem_size]))
-        batch_indexes = np.random.choice(idx_max, self.batch_size, replace=False)  # draw indexes to get trajectories from redis database
-
+    def get_trajectories(self,batch_indexes):
         #get tensors from database
         self.observations=self.__get_tensors('obs',batch_indexes)
         self.observations_ = self.__get_tensors('obs_', batch_indexes)
@@ -197,5 +195,48 @@ class TrainerInterface(InfoInRedis):
         #get multiple keys from database
         self.rewards=self.__get_multiple_keys('reward',batch_indexes)
         self.dones=self.__get_multiple_keys('done',batch_indexes,tf_dtype=tf.int32)
+        return self.observations, self.actions, self.rewards, self.observations_, self.dones
+
+    def get_batch(self):
+        #add waiting from batch
+        self.mem_cntr = int(self.client.get('mem_cntr'))    #get current counter
+        idx_max = int(np.min([self.mem_cntr, self.mem_size]))
+        batch_indexes = np.random.choice(idx_max, self.batch_size, replace=False)  # draw indexes to get trajectories from redis database
+
+        self.observations, self.actions, self.rewards, self.observations_, self.dones=self.get_trajectories(batch_indexes)
 
         return self.observations, self.actions, self.rewards, self.observations_, self.dones
+
+    def save_trajectories_to_file(self,file_name='trajectories.pickle',dir_path='./'):
+        self.file_path_trajectories=os.path.join(dir_path,file_name)
+        """
+        :param file_name:
+        :param dir_path:
+        :return:
+        """
+        self.client.set('stop_collecting', 2) #suspend collecting new data to prevent changing while database is copied
+
+        self.mem_cntr = int(self.client.get('mem_cntr'))    #get current counter
+        idx_max = int(np.min([self.mem_cntr, self.mem_size]))
+
+        #create inversed list of all keys
+        all_indexes=list(reversed(range(idx_max)))
+
+        #check if all keys for trajectory are existing (regulators send values with database with some delays)
+        for idx in all_indexes:
+            is_key_exist=self.client.exists(f'done{idx}') #done value is saved at last in trajectory
+            last_existing_key=idx
+            if is_key_exist: break
+
+        all_indexes = list(range(last_existing_key)) #indexes with existing keys
+
+        print( f"Downloading trajectories from redis database {self.host} ...")
+        observations, actions, rewards, observations_, dones = self.get_trajectories(all_indexes)
+        self.client.set('stop_collecting', 0)  # resume collecting new data
+
+        #saving trajectories in pickle file
+        with open(self.file_path_trajectories, 'wb') as f:
+            print(f'Saving trajectory in the  file {self.file_path_trajectories}')
+            pickle.dump([observations, actions, rewards, observations_, dones], f)
+            print(f'{last_existing_key} trajectories [observations, actions, rewards, observations_, dones] from redis database {self.host} has been saved in file {self.file_path_trajectories}')
+
