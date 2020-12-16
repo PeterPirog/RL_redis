@@ -19,8 +19,10 @@ cloudpickle==1.6.0
 colorama==0.4.4
 colorful==0.5.4
 Cython==0.29.21
+decorator==4.4.2
 dm-tree==0.1.5
 filelock==3.0.12
+flatbuffers==1.12
 future==0.18.2
 gast==0.3.3
 glfw==2.0.0
@@ -31,7 +33,7 @@ google-auth-oauthlib==0.4.2
 google-pasta==0.2.0
 googleapis-common-protos==1.52.0
 gpustat==0.6.0
-grpcio==1.33.2
+grpcio==1.32.0
 gym==0.17.3
 h5py==2.10.0
 hiredis==1.1.0
@@ -84,6 +86,7 @@ tensorboard-plugin-wit==1.7.0
 tensorboardX==2.1
 tensorflow==2.3.1
 tensorflow-estimator==2.3.0
+tensorflow-probability==0.11.1
 termcolor==1.1.0
 typing-extensions==3.7.4.3
 urllib3==1.26.2
